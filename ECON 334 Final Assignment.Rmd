@@ -1,0 +1,289 @@
+---
+title: "Wildfires in BC"
+author: "Orson Nickson"
+date: '2022-11-29'
+output: html_document
+---
+
+# Introduction
+
+This report is about wildfires in BC. This report seeks to answer how much temperature affects how dangerous fires can become, when fires are the most prevalent and how dangerous they are, whether the weather affects fires at all, and where they are in BC. By answering these questions this report hopes to educate people on what can be done to improve our knowledge of wildifres in BC. This report will also illustrate what will happen in the future as our climate continues to warm, the incidence of dangerous fires would be expected to increase.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, fig.align = "center")
+
+rm(list = ls())
+library("tidyverse")
+library("lubridate")
+library("vtable")
+
+```
+
+```{r mapsetup}
+
+library("cancensus")
+library("sf")
+library("geojsonsf")
+
+options(cancensus.api_key='CensusMapper_fb3a423d49ae288472cb171cae4a6d0d')
+options(cancensus.cache_path = "C:\\Users\\Sheep\\Desktop\\MapData")
+
+#load shape file data for BC
+census_data <- get_census(dataset='CA21', regions=list(PR="59"), vectors=c(), labels="detailed", geo_format="sf", level='CSD')
+
+```
+
+```{r mapdata2}
+
+#load shape file data for the smaller map of BC
+smaller_census <- get_census(dataset='CA21', regions=list(DA=c("59090631","59090629","59090638","59090640","59090652","59090647","59090648","59090650","59090649","59090646","59090645","59090636","59090637","59090639","59090623","59090624","59090810","59331683","59331577","59331610","59331602","59331626","59331601","59331589","59331744","59331745","59331574","59331599","59331593","59331594","59331591","59331582","59331604","59331584","59331605","59331578","59331576","59331625","59331624","59331575","59310124","59310134","59310138","59310136","59310133","59310132","59310247","59310248","59310123","59310125","59310128","59310130","59310242","59331475","59331473","59331476","59331474","59331477","59331478","59331465","59331466","59331459","59331461","59331479","59331483","59331480","59331460","59331585","59331734","59331472","59331471","59331733","59331738","59331579","59331608","59331588","59331581","59331684"),CMA=c("59925","59915","59918","59913"),CSD=c("5933032","5931032","5933012","5909048","5909016","5933060","5939039","5933802","5907024","5933841","5931034","5931026","5931813","5931831","5931829","5931821","5933019","5933817","5931827","5931815","5931828","5931020","5931012","5931843","5931812","5933801","5933809","5933807","5933808","5909805","5909014","5909815","5907053","5907049","5909806","5909847","5909850","5909817","5909836","5909819","5933803","5933006","5933805","5909816","5933882","5933849","5933879","5933866","5933015","5933850","5933824","5933825","5909876","5909808","5909841","5933859","5933857","5933846","5933845","5933836","5933875","5933872","5933812","5933024","5933828","5933858","5933876","5933813","5933873","5933842","5933833","5933853","5933831","5933878","5933874","5933840","5933839","5933848","5933868","5933870","5933852","5933855","5933832","5933829","5933823","5933865","5933851","5933896","5933861","5933881","5933893","5933834","5933899","5933810","5931832","5933837","5933854","5933844","5931817","5931816","5931822","5931820","5931834","5931825","5933037","5931818","5931842","5931819","5931814","5931823","5933819","5933028","5933821","5931017","5931844","5909845","5933806","5907035","5907807","5933898","5933008","5907809","5907808","5907009","5909009","5909804","5907055","5909812")), vectors=c(), labels="detailed", geo_format="sf", level='Regions')
+
+```
+
+```{r data, cache=TRUE, message = FALSE}
+
+#load data
+fireData <- read_csv("2021_BCWS_WX_OBS.csv")
+fireData <- fireData %>% replace(is.na(fireData), 0)
+fireStationData <- read_csv("2021_BCWS_WX_STATIONS.csv") %>% select(1,2,4,5)
+
+```
+
+# Data
+The data was published by the BC Wildfire Service. The data used in this analysis came in the format of 2 csv files. The first file was 2.7 million weather station observations. The second file was a list of stations, the station names, and where they are located in coordinates. The data used in this analysis is weather data that includes the date of the observation, the amount of precipitation, the temperature, wind speed, the danger rating of any fire reported, and the station ID. All of this data is collected from weather stations all over BC. Other data used included shape file data from CanCensus to create maps of British Columbia.
+
+```{r filterdata}
+
+#filter the firedata by observations taken at noon on any given day
+filteredFireData <- filter_at(fireData, vars(2), any_vars(grepl("........12\\b", .)))
+
+#Create a proper date variable and select the variables
+filteredFireData <- filteredFireData %>% 
+  mutate(Date = sub('12\\b', '', DATE_TIME)) %>% 
+  mutate(Date = as.character(Date)) %>%
+  select(1, 17, 3, 5, 7, 16) %>% 
+  mutate(Date = ymd(Date)) %>%
+  arrange(Date) %>%
+  mutate(DANGER_RATING = as.numeric(DANGER_RATING))
+
+# Left join the station data to the fire data
+filteredFireData <- filteredFireData %>% 
+  left_join(fireStationData, by = "STATION_CODE")
+
+```
+
+```{r sumData}
+
+sumTableFireData <- filteredFireData %>% select(2:6) %>% filter(DANGER_RATING >= 1)
+
+monthFireData <- sumTableFireData %>% 
+  group_by(Month = month(Date), DANGER_RATING) %>% 
+  summarize(Count = n()) %>%
+  mutate(monthName = if_else(Month == 1, "Jan", ""),
+         monthName = if_else(Month == 2, "Feb", monthName),
+         monthName = if_else(Month == 3, "Mar", monthName),
+         monthName = if_else(Month == 4, "Apr", monthName),
+         monthName = if_else(Month == 5, "May", monthName),
+         monthName = if_else(Month == 6, "Jun", monthName),
+         monthName = if_else(Month == 7, "Jul", monthName),
+         monthName = if_else(Month == 8, "Aug", monthName),
+         monthName = if_else(Month == 9, "Sep", monthName),
+         monthName = if_else(Month == 10, "Oct", monthName),
+         monthName = if_else(Month == 11, "Nov", monthName),
+         monthName = if_else(Month == 12, "Dec", monthName)) %>%
+  mutate(DANGER_RATING = as.character(DANGER_RATING))
+fireOnlyFilteredFireData <- filteredFireData %>% filter(DANGER_RATING >= 1)
+```
+
+```{r bigmapdata, message = FALSE}
+
+#Coordinates for Cities in British Columbia
+cityNames <- c("Prince George", "Kelowna", "Vancouver")
+cityLatitude <- c(53.9170641, 49.879913, 49.248523)
+cityLongitude <- c(-122.7496693, -119.449625, -123.1088)
+
+cities <- data.frame(cityNames, cityLatitude, cityLongitude)
+cities <- cities %>% 
+  st_as_sf(coords = c("cityLongitude", "cityLatitude"), crs = st_crs("EPSG:4326"))
+
+#Turn the longitude and latitude into a geometry variable for shape file
+bigGeomData <- filteredFireData %>% 
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = st_crs("EPSG:4326")) %>% 
+  filter(DANGER_RATING != 0)
+
+bigGeomData <- bigGeomData %>% group_by(STATION_CODE, DANGER_RATING) %>% summarize(numOfFires = n())
+```
+
+```{r smallmapdata}
+
+#Coordinates for Cities in the smaller section of BC
+citySmallNames <- c("Kelowna", "Vancouver", "Whistler", "Kamloops")
+citySmallLatitude <- c(49.879913, 49.248523, 50.1163196, 50.674522)
+citySmallLongitude <- c(-119.449625, -123.1088, -122.9573563, -120.3272674)
+
+citiesSmall <- data.frame(citySmallNames, citySmallLatitude, citySmallLongitude)
+citiesSmall <- citiesSmall %>% 
+  st_as_sf(coords = c("citySmallLongitude", "citySmallLatitude"), crs = st_crs("EPSG:4326"))
+
+#Turn the longitude and latitude into a geometry variable for shape file
+smallGeomData <- filteredFireData %>% 
+  filter(LONGITUDE >= -124 & LONGITUDE <= -119) %>% 
+  filter(LATITUDE <= 51.55 & LATITUDE >= 49) %>% 
+  st_as_sf(coords = c("LONGITUDE", "LATITUDE"), crs = st_crs("EPSG:4326")) %>% 
+  filter(DANGER_RATING != 0)
+
+smallGeomData <- smallGeomData %>% group_by(STATION_CODE, DANGER_RATING) %>% summarize(numOfFires = n())
+
+```
+
+# Summary Statistics
+
+```{r summaryStats}
+
+#Sumtable of Fire observations 
+sumtable(sumTableFireData)
+
+#change the order of the months and danger rating
+monthFireData$monthName <- factor(monthFireData$monthName, levels = c("Jan", "Feb", "Mar", 
+                                                                      "Apr", "May", "Jun", 
+                                                                      "Jul", "Aug", "Sep", 
+                                                                      "Oct", "Nov", "Dec"))
+
+monthFireData$DANGER_RATING <- factor(monthFireData$DANGER_RATING, levels = c("5", "4", "3", "2", "1"))
+
+ggplot(data = monthFireData, aes(x = monthName, y = Count, fill = DANGER_RATING)) + 
+  geom_bar(position = "fill", stat = "identity") + 
+  #coord_flip() +
+  scale_fill_manual(values = c("red", "darkorange", "orange", "gold", "yellow")) +
+  labs(x = "Months", y = "Proportion, %", 
+       fill = "Danger Rating", 
+       title = "Proportion of Wild Fires per Month by Danger Rating",
+       subtitle = "British Columbia",
+       captions = "BC Data Catlogue: BC Wildfire Active Weather Stations Data") +
+  scale_y_continuous(labels = scales::percent)
+
+```
+This figure shows the proportion of fires of each danger rating in each month. In the months of January and November all the fires had a danger rating of 1. There were no fires reported in February or December. This makes sense as it is very cold and there are less people camping, which could be a source of fires. There were only 3 reports of fires in January and 11 reports of fires in November, compared to the hundreds of reports of fires in the other months of the year. As you can see the summer months have the highest reports of dangerous fires. As the climate continues to warm we might expect to see more dangerous fires being reported in the spring and fall seasons.
+
+# Linear Regression Model
+
+```{r regressionplot}
+
+out1 <- lm(DANGER_RATING ~ TEMPERATURE + PRECIPITATION, data = fireOnlyFilteredFireData)
+
+summary(out1)
+
+```
+The intercept for danger rating is 0.577 when there is a fire report. As temperature increases by 1 degree celcius the danger of the fire increases by 0.115. For each cm of precipitation the expected danger of a fire goes down by 0.09558. The R-Squared is 0.5302 this is very interesting as that means temperature and precipitation account for 53% of the change in danger rating. 
+
+```{r dangerRatingPlot}
+
+ggplot(data = fireOnlyFilteredFireData, aes(x = TEMPERATURE, y = DANGER_RATING, color = TEMPERATURE)) + 
+  geom_point(size = 3) + 
+  geom_smooth(method = "lm", formula = y ~ x) +
+  labs(x = "Temperature, C", y = "Danger Rating", 
+       color = "Temperature, C", 
+       title = "Regression of Danger Rating Reports on Temperature",
+       captions = "BC Data Catlogue: BC Wildfire Active Weather Stations Data") +
+  scale_color_gradient2(low = "blue", mid = "yellow", high = "red", midpoint = 15) +
+  scale_x_continuous(limits = c(-8, 45), breaks = c(-5, 0, 5, 10, 15, 20, 25, 30, 35, 40, 45)) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(0, 1, 2, 3, 4, 5, 6))
+  
+```
+This figure is a scatterplot of temperature and danger rating with a regression of danger rating on temperature. As temperature increases so does the danger rating of fires reported. This answers the question if temperature affects the danger of fires. As our climate keeps warming the danger of fire is going to increase, as well as the frequency of dangerous fires. 
+
+```{r tempplot}
+#Plot of temperature over time with color as Danger Rating
+tempPlot <- fireOnlyFilteredFireData %>% ggplot(aes(x = Date, y = TEMPERATURE, color = DANGER_RATING)) + 
+  geom_point(alpha = 0.3) +
+  geom_smooth(method = "lm", formula = y ~ x + I(x^2), color = "blue") + 
+  scale_color_gradient(low = "yellow", high = "red") +
+  labs(x = "Date", y = "Temperature, C", 
+       color = "Danger Rating",
+       title = "Temperature in BC with Danger Rating of Wild Fires", 
+       subtitle = "2021",
+       captions = "BC Data Catlogue: BC Wildfire Active Weather Stations Data") +
+  scale_y_continuous(limits = c(-15, 50)) 
+
+tempPlot
+
+```
+This is a scatterplot of Temperature over the year of 2021. As you can see, the Danger Rating of reported fires increases over the year. The formula for the linear regression line is Temperature ~ Date + Date^2. As the climate gets hotter I would expect the number of fires to be reported to increase all year round and a vertical shift up as the average temperature increases.
+
+```{r bigmap, fig.align = "center"}
+#fireTransform <- fireTransform %>% filter(DANGER_RATING != 0) 
+ggplot(census_data) + 
+  stat_sf_coordinates(data = bigGeomData, aes(color = DANGER_RATING, size = numOfFires)) +
+  geom_sf(alpha = 0.01) +
+  labs(x = "Longitude", y = "Latitude", color = "Danger Rating", 
+       title = "Weather Station Fire Reports", 
+       subtitle =  "British Columbia, 2021", 
+       size = "No. of Reports",
+       captions = "BC Data Catlogue: BC Wildfire Active Weather Stations Data") + 
+  scale_color_gradient(low = "yellow", high = "red") + 
+  stat_sf_coordinates(data = bigGeomData, size = 1, shape = 24, fill = "#1E90FF") +
+  stat_sf_coordinates(data = cities, size = 5, shape = 20, color = "black") + 
+  annotate("text", x = -120.6088, y = 48.74852, label = "Vancouver") + 
+  geom_segment(aes(x = -122.7497, y = 53.91706, xend = -119, yend = 54), size = 1.0) +
+  annotate("text", x = -116.5, y = 54.35, label = "Prince George") + 
+  geom_segment(aes(x = -119.4496, y = 49.87991, xend = -118, yend = 53), size = 1.0) +
+  annotate("text", x = -116, y = 53, label = "Kelowna")
+``` 
+This is a map of British Columbia, in 2021, with the location of weather stations and of 3 cities to give the reader an idea of where important landmarks are on the map. Each blue triangle is the location of a weather station. Each weather station on the map reports weather data, as well as danger rating of nearby fires. These are not the location of fires. In the north of BC there are fewer weather stations and therefore fewer reports of fires. While in the south of BC there are a very large number of weather stations and therefore a large volume of reports of fires. You would expect to see fewer reports of fires the further north you go as population density decreases and the closer to the arctic a weather station is.
+
+```{r smallmap}
+ggplot(smaller_census) + 
+  geom_sf(alpha = 1) +
+  stat_sf_coordinates(data = smallGeomData, aes(color = DANGER_RATING, size = numOfFires)) +
+  labs(x = "Longitude", y = "Latitude", 
+       title = "Weather Station Fire Reports", 
+       subtitle =  "South Western British Columbia, 2021", 
+       color = "Danger Rating",
+       size = "No. of Reports",
+       captions = "BC Data Catlogue: BC Wildfire Active Weather Stations Data") + 
+  scale_color_gradient(low = "yellow", high = "red") + 
+  stat_sf_coordinates(data = smallGeomData, size = 1, shape = 24, fill = "#1E90FF") +
+  theme(legend.position = "right") +
+  stat_sf_coordinates(data = citiesSmall, size = 5, shape = 20, color = "black") +
+  annotate("text", x = -123.1088, y = 49.14852, label = "Vancouver") + 
+  annotate("text", x = -122.9574, y = 50.21632, label = "Whistler") + 
+  annotate("text", x = -119.4496, y = 50, label = "Kelowna") + 
+  annotate("text", x = -120.3273, y = 50.77452, label = "Kamloops")
+``` 
+
+This is a zoomed in part of BC around Kamloops, Kelowna, Whistler, and Vancouver. This is where a lot of the smoke we experience in Vancouver from wildfires and forest fires comes from. There are a lot of reports of dangerous wild fires in the south of BC. 
+
+# Conclusion
+This report highlighted the danger of wildfires and how wildfires become more dangerous in the summer. Temperature and precipitation is an excellent predictor of how dangerous fires are. As the climate becomes warmer wildfires are expected to become more dangerous and we will expect to see a higher proportion of dangerous wildfires. 
+
+# References 
+
+Packages
+tidyverse
+lubridate
+vtable
+cancensus
+sf
+geojsonsf
+
+Specific Files
+https://www.for.gov.bc.ca/ftp/HPR/external/!publish/BCWS_DATA_MART/2021/
+
+Catalog of Files
+https://www.for.gov.bc.ca/ftp/HPR/external/!publish/BCWS_DATA_MART/
+
+BC Data Catalogue
+https://catalogue.data.gov.bc.ca/dataset/bc-wildfire-active-weather-stations
+
+Cancensus CensusMapper
+https://mountainmath.github.io/cancensus/articles/cancensus.html
+
+Articles Referenced
+https://mountainmath.github.io/cancensus/articles/Making_maps_with_cancensus.html
+https://mountainmath.github.io/cancensus/articles/cancensus.html
+https://censusmapper.ca/api/CA21#api_overview
+https://gist.github.com/andrewheiss/0580d6ffec37b6bc4d0ae8e77bf30956
+https://stackoverflow.com/questions/58676661/geom-sf-mapping-points-shapes
+https://censusmapper.ca/api/CA21#11/50.6910/-120.4033
+http://www.sthda.com/english/wiki/ggplot2-add-straight-lines-to-a-plot-horizontal-vertical-and-regression-lines
+https://get-direction.com/cities-lat-long.html?region=ca-british-columbia-53&offset=75
